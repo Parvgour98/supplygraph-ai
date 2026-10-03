@@ -16,6 +16,7 @@ st.set_page_config(page_title="SupplyGraph AI", layout="wide")
 session = get_active_session()
 
 SV = "SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOGY"
+APP_BUILD = "2026-10-03.4 (row-capped answers)"
 SOURCE = "SNOWFLAKE_SAMPLE_DATA.TPCH_SF1 (TPC-H SF1, orders 1992-01-01 to 1998-08-02)"
 BLUE, AMBER, RED = "#29B5E8", "#F5A623", "#E8582A"
 
@@ -198,7 +199,7 @@ with st.sidebar:
     st.markdown("### SupplyGraph AI")
     st.caption("Challenge 5 · Supply Chain Ontology & Governed Conversational Analytics")
     st.markdown("**Governed layer**")
-    st.code(SV, language=None)
+    st.markdown("`SUPPLYGRAPH_AI`<br>`.SUPPLY_CHAIN`<br>`.SUPPLY_CHAIN_ONTOLOGY`", unsafe_allow_html=True)
     st.markdown("**Source data**")
     st.caption(SOURCE)
     st.caption("SYNTHETIC enrichment (clearly labelled): plants, freight & duty tariffs, IoT telemetry.")
@@ -207,6 +208,7 @@ with st.sidebar:
     if st.button("Refresh cached results"):
         st.cache_data.clear()
         st.rerun()
+    st.caption(f"Build {APP_BUILD}")
 
 # --------------------------------------------------------------------------
 # Header
@@ -230,14 +232,14 @@ c[5].metric("Landed Cost", fmt_b(k["TOTAL_LANDED_COST"]),
 
 tabs = st.tabs([
     "Hero Demo",
-    "Executive Overview",
+    "Executive",
     "Plant Network",
-    "Supplier Performance",
-    "Regional Risk & Spend",
+    "Suppliers",
+    "Regions",
     "Ask SupplyGraph",
     "Definition Conflict",
     "Metrics & Evidence",
-    "Persona Views",
+    "Personas",
 ])
 TAB = dict(zip(["hero", "exec", "plant", "supplier", "region", "ask", "defs", "metrics", "persona"], tabs))
 
@@ -266,9 +268,15 @@ with TAB["hero"]:
             if run_live:
                 res = ask_analyst(question)
                 if res["ok"] and res["sql"]:
-                    df = run_query(res["sql"])
+                    df, _ = run_answer(res["sql"])
                     df.columns = [x.upper() for x in df.columns]
-                    otd_col = next(c_ for c_ in df.columns if "ON_TIME" in c_ or "OTD" in c_)
+                    otd_col = next((c_ for c_ in df.columns if "ON_TIME" in c_ or "OTD" in c_), None)
+                    if "SUPPLIER_REGION" not in df.columns or otd_col is None:
+                        st.warning("Analyst returned an unexpected shape; see the generated SQL.")
+                        st.dataframe(df, hide_index=True, width="stretch")
+                        with st.expander("Generated SQL"):
+                            st.code(res["sql"], language="sql")
+                        continue
                     view = df[["SUPPLIER_REGION", otd_col]].rename(columns={otd_col: "ON_TIME_DELIVERY_RATE"})
                     view["ON_TIME_DELIVERY_RATE"] = view["ON_TIME_DELIVERY_RATE"].astype(float).round(2)
                     persona_results[persona] = view.sort_values("SUPPLIER_REGION").reset_index(drop=True)

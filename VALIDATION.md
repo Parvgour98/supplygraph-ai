@@ -13,7 +13,7 @@ source-system definitions).
 | Verified queries executable | 12/12 | **18/18** | 0 |
 | Hero demo persona consistency | IDENTICAL | **IDENTICAL** | 0 |
 | Persona KPI fingerprint | `ec8773a9f799` (8 KPIs) | **`fcb10b862e85`** (13 KPIs), identical for all 3 personas | 0 |
-| Streamlit headless scenarios | 9/9 | **13/13** | 0 |
+| Streamlit headless scenarios | 9/9 | **14/14** | 0 |
 | Repository SQL compiles | 16/16 | **30/30** | 0 |
 | Semantic view | 7 tables · 7 rel · 26 facts · 46 dims · 20 metrics | **12 tables · 11 rel · 44 facts · 80 dims · 39 metrics** | 0 |
 | Secrets in repository | none | **none** | 0 |
@@ -121,11 +121,12 @@ The governed values equal the semantic-view metrics in §2.
 | 11 | Analyst unreachable → labelled verified query (landed cost) | PASS |
 | 12 | Analyst unreachable + no match → explicit error | PASS |
 | 13 | Supplier tab: region filter + bottom performers | PASS |
+| 14 | Row-level question ("Which shipments have IoT risk signals?") capped at 1,000 rows with notice, no MessageSizeError | PASS |
 
 Metrics & Evidence tab live check: 7/7 MATCH (spend, OTD, fill rate, lead time, shipment count,
 days of inventory, landed cost).
 
-Deployment: `SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLYGRAPH_AI_APP`, url_id `ex2gl6s3pi6f24tyrsok`.
+Deployment: `SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLYGRAPH_AI_APP`, url_id `wz5v63kscgkyed73aqsp`.
 
 **Not verified:** visual rendering in the Snowsight browser, and the `_snowflake` Analyst call from
 inside the SiS runtime. The headless test routed that call to the same Cortex Analyst service.

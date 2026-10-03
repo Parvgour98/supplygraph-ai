@@ -88,7 +88,7 @@ No external services, credentials or data copies of TPC-H.
 - Metric consistency: **18/18** semantic-view metrics match independent SQL on the raw source
   tables exactly; the original 9 are unchanged after enrichment.
 - Persona consistency: **IDENTICAL** for 3 phrasings, and the same governed KPI fingerprint across personas.
-- Streamlit: **13/13** headless end-to-end scenarios, including outage fallback.
+- Streamlit: **14/14** headless end-to-end scenarios, including outage fallback.
 - **18/18** verified queries and **30/30** SQL statements validated; no secrets in the repo.
 
 ### Demo flow
@@ -120,7 +120,7 @@ https://github.com/Parvgour98/supplygraph-ai
 
 ### Deployed application
 Streamlit in Snowflake app `SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLYGRAPH_AI_APP`
-(account `YLCULZU-ZI04332`, url_id `ex2gl6s3pi6f24tyrsok`). Snowsight: Projects → Streamlit → SupplyGraph AI.
+(account `YLCULZU-ZI04332`, url_id `wz5v63kscgkyed73aqsp`). Snowsight: Projects → Streamlit → SupplyGraph AI.
 
 ---
 

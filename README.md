@@ -183,7 +183,7 @@ No external services, API keys or credentials are used.
 | Testing NL questions | `cortex analyst query --view=...` |
 | **Analyst hardening** | Diagnosed that Analyst's per-table CTEs only select columns registered on that logical table; registered denormalised dimensions on every holding table (6/15 → 9/15 → 15/15), then applied the same pattern to the enrichment tables (22/22) |
 | Gap analysis vs the exact challenge brief | Requirement-by-requirement review, leading to the Plant / DOI / Landed Cost / IoT / definitions enrichment |
-| Headless end-to-end app test | Python REPL + Streamlit `AppTest` (13 scenarios) |
+| Headless end-to-end app test | Python REPL + Streamlit `AppTest` (14 scenarios) |
 | Validation, docs, Git commit | SQL, file tools, `git` |
 
 ---
@@ -199,7 +199,7 @@ Full report: [VALIDATION.md](VALIDATION.md). Reproducible: [sql/07_validation.sq
 | Verified queries executable | **18/18** |
 | Hero demo: 3 persona phrasings | **IDENTICAL** |
 | Persona views: governed KPI fingerprint | **Same** (`fcb10b862e85`) for all three personas |
-| Streamlit app headless test | **13/13** scenarios |
+| Streamlit app headless test | **14/14** scenarios |
 | Repository SQL compiles | **30/30** statements |
 | Secrets in repository | **None** |
 
