@@ -5,6 +5,7 @@ SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOGY, either via SEMANTIC_VIEW()
 queries or via Cortex Analyst SQL generated from that semantic view.
 """
 import hashlib
+import itertools
 import json
 
 import pandas as pd
@@ -105,6 +106,22 @@ VERIFIED = {
 @st.cache_data(ttl=900, show_spinner=False)
 def run_query(sql: str) -> pd.DataFrame:
     return session.sql(sql).to_pandas()
+
+
+ANSWER_ROW_LIMIT = 1000
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def run_answer(sql: str) -> tuple:
+    """Run generated SQL unchanged but fetch at most ANSWER_ROW_LIMIT + 1 rows; returns (df, truncated).
+
+    Streaming with to_local_iterator (instead of wrapping the SQL in a LIMIT subquery) keeps the
+    generated ORDER BY intact and never transfers row-level results of millions of rows.
+    """
+    result = session.sql(sql)
+    rows = list(itertools.islice(result.to_local_iterator(), ANSWER_ROW_LIMIT + 1))
+    df = pd.DataFrame([r.as_dict() for r in rows]) if rows else pd.DataFrame(columns=result.columns)
+    return df.head(ANSWER_ROW_LIMIT), len(df) > ANSWER_ROW_LIMIT
 
 
 def sv(metrics: str, dimensions: str = "", order_by: str = "") -> pd.DataFrame:
@@ -404,8 +421,11 @@ with TAB["ask"]:
                 st.error(f"Cortex Analyst is unreachable and no verified query matches. Reason: {res['error']}")
         if sql:
             try:
-                answer = run_query(sql)
+                answer, truncated = run_answer(sql)
                 st.markdown("**Answer**")
+                if truncated:
+                    st.info(f"This question returns row-level detail; showing the first {ANSWER_ROW_LIMIT:,} rows. "
+                            "Ask for a summary (for example 'by ship mode' or 'by plant') to aggregate.")
                 st.dataframe(answer, hide_index=True, width="stretch")
             except Exception as exc:
                 st.error(f"Generated SQL failed: {str(exc)[:300]}")
