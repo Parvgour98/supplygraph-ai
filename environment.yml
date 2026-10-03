@@ -1,0 +1,6 @@
+name: supplygraph_ai
+channels:
+  - snowflake
+dependencies:
+  - streamlit=1.52.0
+  - pandas
