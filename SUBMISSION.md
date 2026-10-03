@@ -116,7 +116,7 @@ No external services, credentials or data copies of TPC-H.
 - Cortex Agents not used by design; Cortex Analyst is probabilistic for untested phrasings.
 
 ### GitHub URL
-`<https://github.com/<your-user>/supplygraph-ai>`
+https://github.com/Parvgour98/supplygraph-ai
 
 ### Deployed application
 Streamlit in Snowflake app `SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLYGRAPH_AI_APP`
