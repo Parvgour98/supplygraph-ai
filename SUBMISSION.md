@@ -26,7 +26,7 @@ IoT Shipment Events and Source-System Definitions) as a single Snowflake Semanti
 tables, 11 relationships and 39 governed metrics. Canonical definitions cover On-Time Delivery,
 Fill Rate, Days of Inventory, Landed Cost, Total Spend, Lead Time, Supplier Performance, Spend
 Concentration and IoT shipment risk. Cortex Analyst answers natural-language and cross-domain
-questions grounded in the ontology, helped by 18 verified queries. A Streamlit in Snowflake app
+questions grounded in the ontology, helped by 21 verified queries. A Streamlit in Snowflake app
 computes every KPI through `SEMANTIC_VIEW()`, shows each answer's SQL, definition and source,
 contrasts the per-system definitions with the governed one, and proves live that Planning,
 Procurement and Logistics get identical answers.
@@ -69,7 +69,7 @@ scenarios), validated 18 metrics against raw sources, and produced the documenta
 (2) 11 zero-copy views plus 5 labelled synthetic enrichment tables (ERP plants, TMS freight,
 customs duty, IoT telemetry, source-system definitions) →
 (3) `SUPPLY_CHAIN_ONTOLOGY` semantic view (12 tables, 11 relationships, 44 facts, 80 dimensions,
-39 metrics, 18 verified queries) →
+39 metrics, 21 verified queries) →
 (4) Streamlit in Snowflake app via `SEMANTIC_VIEW()` and Cortex Analyst.
 No external services, credentials or data copies of TPC-H.
 
@@ -89,7 +89,8 @@ No external services, credentials or data copies of TPC-H.
   tables exactly; the original 9 are unchanged after enrichment.
 - Persona consistency: **IDENTICAL** for 3 phrasings, and the same governed KPI fingerprint across personas.
 - Streamlit: **14/14** headless end-to-end scenarios, including outage fallback.
-- **18/18** verified queries and **30/30** SQL statements validated; no secrets in the repo.
+- Wording consistency: 6 phrasings of "which shipments have IoT risk" × 2 runs return **identical** governed rows (12/12).
+- **21/21** verified queries and **30/30** SQL statements validated; no secrets in the repo.
 
 ### Demo flow
 1. **Definition Conflict tab:** on-time delivery is 49.6% (ERP), 38.4% (TMS), 100% (supplier

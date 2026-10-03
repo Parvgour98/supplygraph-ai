@@ -10,7 +10,8 @@ source-system definitions).
 |---|---|---|---|
 | Cortex Analyst NL questions | 15/15 | **22/22** (15 original still pass + 7 new) | 0 |
 | Metrics vs independent SQL on raw sources | 9/9 | **18/18** (9 original unchanged + 9 new) | 0 |
-| Verified queries executable | 12/12 | **18/18** | 0 |
+| Verified queries executable | 12/12 | **21/21** | 0 |
+| Wording consistency (IoT risk, 6 phrasings × 2 runs) | 3 phrasings gave 2 different filters | **12/12 identical** | 0 |
 | Hero demo persona consistency | IDENTICAL | **IDENTICAL** | 0 |
 | Persona KPI fingerprint | `ec8773a9f799` (8 KPIs) | **`fcb10b862e85`** (13 KPIs), identical for all 3 personas | 0 |
 | Streamlit headless scenarios | 9/9 | **14/14** | 0 |
@@ -132,6 +133,28 @@ Deployment: `SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLYGRAPH_AI_APP`, url_id `wz5v63kscg
 inside the SiS runtime. The headless test routed that call to the same Cortex Analyst service.
 Open the app once and press the Hero Demo button to confirm.
 
-## 6. Remaining limitations
+## 6. Wording consistency: governed term "IoT risk"
+
+**Issue found:** "Which shipments have IoT risk signal(s)?" used `iot_alert_flag` (~64% of shipments, includes
+delays), while "Which shipments have IoT risk?" used `condition_risk_flag` (~4.4%), and row-level queries had no
+unique ORDER BY, so the 1,000 rows shown changed between runs.
+
+**Fix (semantic view only, app unchanged):** "IoT risk / risk signal(s) / at-risk shipments" is now a governed
+term meaning `condition_risk_flag = 1` (temperature excursion OR shock). The any-alert flag is documented as
+*not* IoT risk. Row-level results must ORDER BY the full primary key. 3 verified queries were added.
+
+| Phrasing | Runs | Filter used | Stable ORDER BY | First 1,000 rows |
+|---|---|---|---|---|
+| Which shipments have IoT risk signal? | 2 | condition_risk_flag = 1 | yes | identical |
+| Which shipments have IoT risk? | 2 | condition_risk_flag = 1 | yes | identical |
+| Which shipments have IoT risk signals? | 2 | condition_risk_flag = 1 | yes | identical |
+| Show me the shipments with IoT risk | 2 | condition_risk_flag = 1 | yes | identical |
+| List shipments at IoT risk | 2 | condition_risk_flag = 1 | yes | identical |
+| Which shipments have IoT risk signals (no "?") | 2 | condition_risk_flag = 1 | yes | identical |
+
+All 12 calls returned one identical row set. The deployed app (headless test) showed identical rows, every one
+with `CONDITION_RISK_FLAG = 1`. After the change: 22/22 questions, 18/18 metrics, hero IDENTICAL, 21/21 verified queries.
+
+## 7. Remaining limitations
 
 See README §12. None are blocking.

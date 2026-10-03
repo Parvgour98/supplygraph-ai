@@ -34,7 +34,7 @@ View** and makes that semantic view the only path to a number:
   **Landed Cost**, Total Spend, Average Lead Time, Supplier Performance, Spend Concentration and
   IoT shipment risk (39 governed metrics in total).
 - **Governed conversational analytics:** Cortex Analyst answers natural-language and
-  cross-domain questions grounded in the ontology, guided by 18 verified queries.
+  cross-domain questions grounded in the ontology, guided by 21 verified queries.
 - **Streamlit in Snowflake app:** every KPI is a `SEMANTIC_VIEW()` query. Every answer shows its
   SQL, metric definition and source, and the app proves live that Planning, Procurement and
   Logistics get identical answers.
@@ -83,7 +83,7 @@ Synthetic rules (deterministic and reproducible):
         ▼                                          ▼
  SEMANTIC VIEW  SUPPLY_CHAIN_ONTOLOGY
    12 logical tables · 11 relationships · 44 facts · 80 dimensions · 39 metrics
-   18 verified queries · AI_SQL_GENERATION instructions
+   21 verified queries · AI_SQL_GENERATION instructions
         ▼
  VIEWS (zero-copy)                                   SYNTHETIC ENRICHMENT (labelled SYN_)
    V_SHIPMENTS · V_ORDERS · V_SUPPLIERS · V_PARTS      SYN_PLANTS · SYN_FREIGHT_RATES
@@ -151,7 +151,7 @@ unambiguous join path in the semantic view.
 | Spend Concentration | derived from `total_spend` | supplier spend ÷ total spend | TPC-H |
 | Landed Cost per Unit | `shipment_costs.landed_cost_per_unit` | `SUM(landed_cost) / SUM(quantity)` | TPC-H + SYNTHETIC |
 | Temperature Excursion Rate | `iot_events.temperature_excursion_rate` | `AVG(max_temp_c > 8) × 100` | SYNTHETIC |
-| IoT Condition Risk Rate | `iot_events.condition_risk_rate` | `AVG(temp excursion OR shock) × 100` | SYNTHETIC |
+| **IoT Risk** (governed term) | `iot_events.condition_risk_rate`, `at_risk_shipment_count` | `condition_risk_flag = 1` (temperature excursion OR shock). "Any alert incl. delays" is a separate, explicitly named metric | SYNTHETIC |
 
 Full list (39 metrics): `sql/05_semantic_view.sql`.
 
@@ -196,7 +196,8 @@ Full report: [VALIDATION.md](VALIDATION.md). Reproducible: [sql/07_validation.sq
 |---|---|
 | Cortex Analyst NL questions | **22/22** (15 original + 7 new: plant, DOI, landed cost ×2, IoT, definitions, cross-domain) |
 | Metrics vs independent SQL on raw sources | **18/18 exact** (9 original + 9 new) |
-| Verified queries executable | **18/18** |
+| Verified queries executable | **21/21** |
+| Wording consistency: 6 phrasings of "which shipments have IoT risk" × 2 runs | **12/12 identical** (same governed filter, same ordered rows) |
 | Hero demo: 3 persona phrasings | **IDENTICAL** |
 | Persona views: governed KPI fingerprint | **Same** (`fcb10b862e85`) for all three personas |
 | Streamlit app headless test | **14/14** scenarios |
@@ -278,7 +279,7 @@ supplygraph-ai/
    are not implemented.
 8. **Cortex Agents not used.** They are available on the account; the solution uses Semantic View
    + Cortex Analyst by design.
-9. **Cortex Analyst is probabilistic.** Untested phrasings may produce different SQL. If the API is
+9. **Cortex Analyst is probabilistic.** Governed terms, verified queries and a deterministic-ordering rule make answers stable for tested phrasings (12/12 identical); very different wording can still be interpreted differently. If the API is
    unreachable, the app falls back to a labelled verified query or an explicit error.
 10. Historical period only (orders 1992-01-01 to 1998-08-02).
 

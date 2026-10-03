@@ -114,8 +114,8 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     iot_events.shock_event_flag AS SHOCK_EVENT_FLAG COMMENT = '1 if a shock event was recorded',
     iot_events.delay_alert_flag AS DELAY_ALERT_FLAG COMMENT = '1 if receipt was after commit date',
     iot_events.delay_hours AS DELAY_HOURS COMMENT = 'Hours late',
-    iot_events.condition_risk_flag AS CONDITION_RISK_FLAG COMMENT = '1 if temperature excursion or shock',
-    iot_events.iot_alert_flag AS IOT_ALERT_FLAG COMMENT = '1 if delay, temperature excursion or shock',
+    iot_events.condition_risk_flag AS CONDITION_RISK_FLAG COMMENT = 'GOVERNED definition of IoT risk / IoT risk signal: 1 if temperature excursion or shock event',
+    iot_events.iot_alert_flag AS IOT_ALERT_FLAG COMMENT = 'Any IoT alert including delay. NOT the definition of IoT risk; use only when any alert including delays is explicitly requested',
     iot_events.gps_ping_count AS GPS_PING_COUNT COMMENT = 'GPS pings received in transit',
     -- Source-system definitions
     source_definitions.metric_value AS METRIC_VALUE COMMENT = 'Metric value under this source system definition',
@@ -256,9 +256,9 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     iot_events.temperature_excursion_rate AS AVG(iot_events.temp_excursion_flag) * 100 WITH SYNONYMS = ('temperature excursion rate', 'cold chain breach rate') COMMENT = 'Pct of shipments with temperature excursion',
     iot_events.shock_event_rate AS AVG(iot_events.shock_event_flag) * 100 COMMENT = 'Pct of shipments with a shock event',
     iot_events.delay_alert_rate AS AVG(iot_events.delay_alert_flag) * 100 COMMENT = 'Pct of shipments with a delay alert',
-    iot_events.condition_risk_rate AS AVG(iot_events.condition_risk_flag) * 100 WITH SYNONYMS = ('IoT risk rate', 'shipment risk rate') COMMENT = 'Pct of shipments with temperature excursion or shock',
-    iot_events.iot_alert_rate AS AVG(iot_events.iot_alert_flag) * 100 COMMENT = 'Pct of shipments with any IoT alert',
-    iot_events.at_risk_shipment_count AS SUM(iot_events.condition_risk_flag) COMMENT = 'Shipments with temperature excursion or shock',
+    iot_events.condition_risk_rate AS AVG(iot_events.condition_risk_flag) * 100 WITH SYNONYMS = ('IoT risk rate', 'IoT risk', 'IoT risk signal rate', 'shipment risk rate') COMMENT = 'GOVERNED IoT risk rate: pct of shipments with temperature excursion or shock',
+    iot_events.iot_alert_rate AS AVG(iot_events.iot_alert_flag) * 100 WITH SYNONYMS = ('any IoT alert rate') COMMENT = 'Pct of shipments with any IoT alert including delays. Not the IoT risk metric',
+    iot_events.at_risk_shipment_count AS SUM(iot_events.condition_risk_flag) WITH SYNONYMS = ('IoT risk shipment count', 'shipments with IoT risk') COMMENT = 'GOVERNED count of shipments with IoT risk (temperature excursion or shock)',
     iot_events.average_max_temperature AS AVG(iot_events.max_temp_c) COMMENT = 'Average max in-transit temperature (C)',
     source_definitions.source_metric_value AS MAX(source_definitions.metric_value) COMMENT = 'Metric value for a source-system definition',
     source_definitions.variance_vs_governed_pct AS MAX(source_definitions.variance_pct) COMMENT = 'Variance vs governed value in percent'
@@ -287,6 +287,12 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     IoT shipment risk: use iot_events. temperature_excursion_rate = AVG(temp_excursion_flag)*100; condition_risk_rate = AVG(condition_risk_flag)*100.
     Source-system definition questions: use source_definitions (metric_name, source_system, definition_text, metric_value, variance_pct).
     The GOVERNED source_system row is the canonical definition used everywhere else in this semantic view.
+    GOVERNED TERM - IoT risk: "IoT risk", "IoT risk signal", "IoT risk signals", "at-risk shipments" and "shipment risk" ALWAYS mean
+    condition_risk_flag = 1 (temperature excursion OR shock event). Never use iot_alert_flag for these terms; iot_alert_flag
+    (which also includes delays) is used only when the user explicitly asks for any alert including delays.
+    ROW-LEVEL RESULTS: whenever a query returns individual rows (no GROUP BY), always end with an ORDER BY that includes the
+    full primary key so results are deterministic. For iot_events use ORDER BY max_temp_c DESC, order_key, line_number.
+    For shipments and shipment_costs use order_key, line_number; for suppliers or supplier_performance use supplier_key.
   '
 
   AI_VERIFIED_QUERIES (
@@ -357,6 +363,18 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     iot_risk_by_ship_mode AS (
       QUESTION 'Which ship modes have the highest IoT temperature excursion and shipment risk rates?'
       SQL 'SELECT ship_mode, ROUND(AVG(temp_excursion_flag) * 100, 2) AS temperature_excursion_rate, ROUND(AVG(shock_event_flag) * 100, 2) AS shock_event_rate, ROUND(AVG(condition_risk_flag) * 100, 2) AS condition_risk_rate, SUM(condition_risk_flag) AS at_risk_shipments FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS GROUP BY ship_mode ORDER BY condition_risk_rate DESC'
+    ),
+    iot_risk_shipments AS (
+      QUESTION 'Which shipments have IoT risk signals?'
+      SQL 'SELECT order_key, line_number, device_id, ship_mode, plant_name, supplier_region, customer_region, max_temp_c, temp_excursion_flag, shock_event_flag, delay_alert_flag, condition_risk_flag FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS WHERE condition_risk_flag = 1 ORDER BY max_temp_c DESC, order_key, line_number'
+    ),
+    iot_risk_shipments_short AS (
+      QUESTION 'Which shipments have IoT risk?'
+      SQL 'SELECT order_key, line_number, device_id, ship_mode, plant_name, supplier_region, customer_region, max_temp_c, temp_excursion_flag, shock_event_flag, delay_alert_flag, condition_risk_flag FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS WHERE condition_risk_flag = 1 ORDER BY max_temp_c DESC, order_key, line_number'
+    ),
+    iot_risk_shipment_count AS (
+      QUESTION 'How many shipments have IoT risk?'
+      SQL 'SELECT SUM(condition_risk_flag) AS shipments_with_iot_risk, COUNT(*) AS total_shipments, ROUND(AVG(condition_risk_flag) * 100, 2) AS iot_risk_rate FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS'
     ),
     source_definition_comparison AS (
       QUESTION 'How do the source systems define on-time delivery and how does each value compare to the governed definition?'

@@ -14,7 +14,7 @@ feed one governed semantic view, which is the only path from data to an answer.
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │ L3 GOVERNED SEMANTIC LAYER: SUPPLY_CHAIN_ONTOLOGY                              │
 │    12 logical tables · 11 relationships · 44 facts · 80 dimensions ·           │
-│    39 metrics · 18 verified queries · AI_SQL_GENERATION                        │
+│    39 metrics · 21 verified queries · AI_SQL_GENERATION                        │
 └────────┬───────────────────────────────────────────────────────────────────────┘
          ▼
 ┌──────────────────────────────────────────┬─────────────────────────────────────┐
@@ -99,6 +99,10 @@ enrichment tables (for example `plant_name` on shipments, shipment_costs, iot_ev
 part_inventory) gave 7/7 on the new questions.
 
 ### Governed metric design notes
+
+- **Governed terms, not just metrics.** "IoT risk" is bound to `condition_risk_flag` in fact comments, synonyms,
+  instructions and verified queries, so every phrasing resolves to it (12/12 identical). Row-level answers must
+  ORDER BY the full primary key, so the rows shown are deterministic.
 
 - **Days of Inventory** is a *ratio of sums* (`SUM(available) / (SUM(shipped) / demand_days)`).
   The per-part ratio is deliberately not exposed as a fact, so it can't be averaged incorrectly.
