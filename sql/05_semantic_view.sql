@@ -1,6 +1,8 @@
 -- SupplyGraph AI: Semantic View (Supply Chain Ontology)
--- Final hardened version, identical in content to the deployed object.
--- Validated: 15/15 Cortex Analyst questions, 9/9 metrics vs raw TPC-H (see VALIDATION.md).
+-- Final version, identical in content to the deployed object. Requires scripts 01-04.
+-- Logical tables plants, shipment_costs (freight/duty), iot_events and source_definitions
+-- are backed by SYNTHETIC enrichment; all other tables are original TPC-H data.
+-- Validated: see VALIDATION.md.
 
 CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOGY
 
@@ -32,7 +34,27 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     supplier_performance AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SUPPLIER_PERFORMANCE
       PRIMARY KEY (SUPPLIER_KEY)
       WITH SYNONYMS ('supplier scorecard', 'vendor performance', 'supplier metrics')
-      COMMENT = 'Pre-aggregated supplier performance scores'
+      COMMENT = 'Pre-aggregated supplier performance scores',
+    plants AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_PLANTS
+      PRIMARY KEY (PLANT_KEY)
+      WITH SYNONYMS ('plant', 'factory', 'facility', 'site', 'manufacturing plant', 'fulfillment center')
+      COMMENT = 'SYNTHETIC ERP plant master (10 plants). Each part is assigned to one plant.',
+    part_inventory AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_PART_INVENTORY
+      PRIMARY KEY (PART_KEY)
+      WITH SYNONYMS ('inventory position', 'days of supply', 'stock cover')
+      COMMENT = 'Per-part inventory position from TPC-H: available quantity across suppliers vs shipped demand',
+    shipment_costs AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SHIPMENT_LANDED_COST
+      PRIMARY KEY (ORDER_KEY, LINE_NUMBER)
+      WITH SYNONYMS ('landed cost', 'freight', 'duty', 'logistics cost', 'total cost to serve')
+      COMMENT = 'Per-shipment-line landed cost: TPC-H purchase cost plus SYNTHETIC freight and duty tariffs',
+    iot_events AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS
+      PRIMARY KEY (ORDER_KEY, LINE_NUMBER)
+      WITH SYNONYMS ('IoT', 'telemetry', 'sensor events', 'shipment monitoring', 'cold chain')
+      COMMENT = 'SYNTHETIC IoT shipment telemetry: temperature excursion, shock, delay alerts per shipment line',
+    source_definitions AS SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_METRIC_DEFINITION_COMPARISON
+      PRIMARY KEY (METRIC_NAME, SOURCE_SYSTEM)
+      WITH SYNONYMS ('metric definitions', 'source system definitions', 'definition comparison')
+      COMMENT = 'How ERP, logistics TMS and supplier portal define metrics vs the GOVERNED definition, with values'
   )
 
   RELATIONSHIPS (
@@ -42,7 +64,11 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     order_to_customer AS orders (CUSTOMER_KEY) REFERENCES customers,
     supplier_part_to_supplier AS supplier_parts (SUPPLIER_KEY) REFERENCES suppliers,
     supplier_part_to_part AS supplier_parts (PART_KEY) REFERENCES parts,
-    perf_to_supplier AS supplier_performance (SUPPLIER_KEY) REFERENCES suppliers
+    perf_to_supplier AS supplier_performance (SUPPLIER_KEY) REFERENCES suppliers,
+    part_to_plant AS parts (PLANT_KEY) REFERENCES plants,
+    inventory_to_part AS part_inventory (PART_KEY) REFERENCES parts,
+    cost_to_shipment AS shipment_costs (ORDER_KEY, LINE_NUMBER) REFERENCES shipments,
+    iot_to_shipment AS iot_events (ORDER_KEY, LINE_NUMBER) REFERENCES shipments
   )
 
   FACTS (
@@ -71,7 +97,31 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     supplier_performance.total_orders AS TOTAL_ORDERS COMMENT = 'Total orders',
     supplier_performance.total_line_items AS TOTAL_LINE_ITEMS COMMENT = 'Total line items',
     supplier_performance.distinct_parts_supplied AS DISTINCT_PARTS_SUPPLIED COMMENT = 'Distinct parts',
-    supplier_performance.distinct_customers_served AS DISTINCT_CUSTOMERS_SERVED COMMENT = 'Distinct customers'
+    supplier_performance.distinct_customers_served AS DISTINCT_CUSTOMERS_SERVED COMMENT = 'Distinct customers',
+    -- Part inventory (TPC-H). Per-part DAYS_OF_INVENTORY is intentionally not exposed: the governed metric is a ratio of sums.
+    part_inventory.available_quantity AS AVAILABLE_QUANTITY COMMENT = 'Units available across all suppliers of the part',
+    part_inventory.quantity_shipped AS QUANTITY_SHIPPED COMMENT = 'Units shipped (demand) over the order window',
+    part_inventory.demand_days AS DEMAND_DAYS COMMENT = 'Days in the demand window (2406)',
+    -- Landed cost (TPC-H purchase cost + SYNTHETIC tariffs)
+    shipment_costs.quantity AS QUANTITY COMMENT = 'Quantity on the shipment line',
+    shipment_costs.purchase_cost AS PURCHASE_COST COMMENT = 'Quantity times supplier unit supply cost (TPC-H)',
+    shipment_costs.freight_cost AS FREIGHT_COST COMMENT = 'Quantity times SYNTHETIC freight rate per unit for ship mode and lane',
+    shipment_costs.duty_cost AS DUTY_COST COMMENT = 'Purchase cost times SYNTHETIC duty rate for supplier region to plant region',
+    shipment_costs.landed_cost AS LANDED_COST COMMENT = 'Purchase cost + freight cost + duty cost',
+    -- IoT telemetry (SYNTHETIC)
+    iot_events.max_temp_c AS MAX_TEMP_C COMMENT = 'Maximum recorded temperature in transit (C)',
+    iot_events.temp_excursion_flag AS TEMP_EXCURSION_FLAG COMMENT = '1 if max temperature exceeded 8 C',
+    iot_events.shock_event_flag AS SHOCK_EVENT_FLAG COMMENT = '1 if a shock event was recorded',
+    iot_events.delay_alert_flag AS DELAY_ALERT_FLAG COMMENT = '1 if receipt was after commit date',
+    iot_events.delay_hours AS DELAY_HOURS COMMENT = 'Hours late',
+    iot_events.condition_risk_flag AS CONDITION_RISK_FLAG COMMENT = '1 if temperature excursion or shock',
+    iot_events.iot_alert_flag AS IOT_ALERT_FLAG COMMENT = '1 if delay, temperature excursion or shock',
+    iot_events.gps_ping_count AS GPS_PING_COUNT COMMENT = 'GPS pings received in transit',
+    -- Source-system definitions
+    source_definitions.metric_value AS METRIC_VALUE COMMENT = 'Metric value under this source system definition',
+    source_definitions.governed_value AS GOVERNED_VALUE COMMENT = 'Metric value under the governed definition',
+    source_definitions.variance_from_governed AS VARIANCE_FROM_GOVERNED COMMENT = 'Source value minus governed value',
+    source_definitions.variance_pct AS VARIANCE_PCT COMMENT = 'Variance from governed value in percent'
   )
 
   DIMENSIONS (
@@ -127,7 +177,47 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     supplier_parts.supplier_nation AS supplier_parts.SUPPLIER_NATION COMMENT = 'Supplier nation in catalog',
     supplier_parts.part_name AS supplier_parts.PART_NAME COMMENT = 'Part name in catalog',
     supplier_parts.brand AS supplier_parts.BRAND COMMENT = 'Part brand in catalog',
-    supplier_parts.part_type AS supplier_parts.PART_TYPE COMMENT = 'Part type in catalog'
+    supplier_parts.part_type AS supplier_parts.PART_TYPE COMMENT = 'Part type in catalog',
+    supplier_parts.plant_name AS supplier_parts.PLANT_NAME COMMENT = 'Plant the part is assigned to (SYNTHETIC)',
+    -- Plants (SYNTHETIC)
+    plants.plant_name AS plants.PLANT_NAME WITH SYNONYMS = ('plant', 'factory', 'site') COMMENT = 'Plant name',
+    plants.plant_code AS PLANT_CODE COMMENT = 'Plant code',
+    plants.plant_type AS PLANT_TYPE COMMENT = 'Assembly, Fabrication or Distribution Center',
+    plants.plant_city AS PLANT_CITY COMMENT = 'Plant city',
+    plants.plant_nation AS PLANT_NATION COMMENT = 'Plant country',
+    plants.plant_region AS plants.PLANT_REGION COMMENT = 'Plant region',
+    -- Plant attributes denormalised onto other entities (required for Cortex Analyst CTE generation)
+    parts.plant_name AS parts.PLANT_NAME COMMENT = 'Plant the part is assigned to',
+    parts.plant_region AS parts.PLANT_REGION COMMENT = 'Region of the plant the part is assigned to',
+    shipments.plant_name AS shipments.PLANT_NAME WITH SYNONYMS = ('plant', 'receiving plant') COMMENT = 'Plant handling the shipped part',
+    shipments.plant_region AS shipments.PLANT_REGION COMMENT = 'Region of the plant handling the shipped part',
+    -- Part inventory dims
+    part_inventory.part_name AS part_inventory.PART_NAME COMMENT = 'Part name',
+    part_inventory.brand AS part_inventory.BRAND COMMENT = 'Part brand',
+    part_inventory.part_type AS part_inventory.PART_TYPE COMMENT = 'Part type',
+    part_inventory.plant_name AS part_inventory.PLANT_NAME COMMENT = 'Plant the part is assigned to',
+    part_inventory.plant_region AS part_inventory.PLANT_REGION COMMENT = 'Region of the plant',
+    -- Landed cost dims
+    shipment_costs.plant_name AS shipment_costs.PLANT_NAME COMMENT = 'Destination plant',
+    shipment_costs.plant_region AS shipment_costs.PLANT_REGION COMMENT = 'Destination plant region',
+    shipment_costs.supplier_region AS shipment_costs.SUPPLIER_REGION COMMENT = 'Origin supplier region',
+    shipment_costs.ship_mode AS shipment_costs.SHIP_MODE COMMENT = 'Shipping mode',
+    shipment_costs.order_year AS shipment_costs.ORDER_YEAR COMMENT = 'Order year',
+    shipment_costs.lane_type AS LANE_TYPE COMMENT = 'DOMESTIC (same region) or CROSS_REGION',
+    -- IoT dims
+    iot_events.device_id AS DEVICE_ID COMMENT = 'IoT tracker device id',
+    iot_events.ship_mode AS iot_events.SHIP_MODE COMMENT = 'Shipping mode',
+    iot_events.supplier_region AS iot_events.SUPPLIER_REGION COMMENT = 'Origin supplier region',
+    iot_events.customer_region AS iot_events.CUSTOMER_REGION COMMENT = 'Destination customer region',
+    iot_events.plant_name AS iot_events.PLANT_NAME COMMENT = 'Plant handling the shipped part',
+    iot_events.plant_region AS iot_events.PLANT_REGION COMMENT = 'Plant region',
+    iot_events.order_year AS iot_events.ORDER_YEAR COMMENT = 'Order year',
+    -- Source definition dims
+    source_definitions.metric_name AS METRIC_NAME COMMENT = 'On-Time Delivery, Fill Rate or Total Spend',
+    source_definitions.source_system AS SOURCE_SYSTEM COMMENT = 'ERP, LOGISTICS_TMS, SUPPLIER_PORTAL or GOVERNED',
+    source_definitions.definition_text AS DEFINITION_TEXT COMMENT = 'Business definition used by the source system',
+    source_definitions.sql_expression AS SQL_EXPRESSION COMMENT = 'Formula used by the source system',
+    source_definitions.is_governed AS IS_GOVERNED COMMENT = 'TRUE for the canonical governed definition'
   )
 
   METRICS (
@@ -150,7 +240,28 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     supplier_parts.total_inventory_value AS SUM(supplier_parts.inventory_value) WITH SYNONYMS = ('stock value') COMMENT = 'Total inventory value',
     supplier_parts.total_available_quantity AS SUM(supplier_parts.available_quantity) WITH SYNONYMS = ('total stock') COMMENT = 'Total available units',
     supplier_parts.average_supply_cost AS AVG(supplier_parts.supply_cost) COMMENT = 'Avg supply cost per unit',
-    supplier_parts.average_margin AS AVG(supplier_parts.margin_percentage) COMMENT = 'Avg margin percentage'
+    supplier_parts.average_margin AS AVG(supplier_parts.margin_percentage) COMMENT = 'Avg margin percentage',
+    plants.plant_count AS COUNT(plants.PLANT_KEY) WITH SYNONYMS = ('number of plants') COMMENT = 'Plant count',
+    part_inventory.days_of_inventory AS SUM(part_inventory.available_quantity) / NULLIF(SUM(part_inventory.quantity_shipped) / MAX(part_inventory.demand_days), 0)
+      WITH SYNONYMS = ('DOI', 'days of supply', 'inventory days', 'inventory cover')
+      COMMENT = 'Days of inventory = SUM(available quantity) / (SUM(quantity shipped) / demand days). Ratio of sums, never an average of per-part ratios.',
+    part_inventory.average_daily_demand AS SUM(part_inventory.quantity_shipped) / MAX(part_inventory.demand_days) COMMENT = 'Average units demanded per day',
+    part_inventory.total_part_availability AS SUM(part_inventory.available_quantity) COMMENT = 'Total units available',
+    shipment_costs.total_landed_cost AS SUM(shipment_costs.landed_cost) WITH SYNONYMS = ('landed cost', 'total cost to serve') COMMENT = 'SUM(purchase + freight + duty)',
+    shipment_costs.total_purchase_cost AS SUM(shipment_costs.purchase_cost) WITH SYNONYMS = ('purchase cost', 'material cost') COMMENT = 'SUM(quantity * supply cost)',
+    shipment_costs.total_freight_cost AS SUM(shipment_costs.freight_cost) WITH SYNONYMS = ('freight') COMMENT = 'SUM(freight cost)',
+    shipment_costs.total_duty_cost AS SUM(shipment_costs.duty_cost) WITH SYNONYMS = ('duty', 'customs') COMMENT = 'SUM(duty cost)',
+    shipment_costs.landed_cost_per_unit AS SUM(shipment_costs.landed_cost) / NULLIF(SUM(shipment_costs.quantity), 0) WITH SYNONYMS = ('unit landed cost') COMMENT = 'Landed cost per unit',
+    shipment_costs.freight_and_duty_share AS (SUM(shipment_costs.freight_cost) + SUM(shipment_costs.duty_cost)) / NULLIF(SUM(shipment_costs.landed_cost), 0) * 100 COMMENT = 'Freight plus duty as percent of landed cost',
+    iot_events.temperature_excursion_rate AS AVG(iot_events.temp_excursion_flag) * 100 WITH SYNONYMS = ('temperature excursion rate', 'cold chain breach rate') COMMENT = 'Pct of shipments with temperature excursion',
+    iot_events.shock_event_rate AS AVG(iot_events.shock_event_flag) * 100 COMMENT = 'Pct of shipments with a shock event',
+    iot_events.delay_alert_rate AS AVG(iot_events.delay_alert_flag) * 100 COMMENT = 'Pct of shipments with a delay alert',
+    iot_events.condition_risk_rate AS AVG(iot_events.condition_risk_flag) * 100 WITH SYNONYMS = ('IoT risk rate', 'shipment risk rate') COMMENT = 'Pct of shipments with temperature excursion or shock',
+    iot_events.iot_alert_rate AS AVG(iot_events.iot_alert_flag) * 100 COMMENT = 'Pct of shipments with any IoT alert',
+    iot_events.at_risk_shipment_count AS SUM(iot_events.condition_risk_flag) COMMENT = 'Shipments with temperature excursion or shock',
+    iot_events.average_max_temperature AS AVG(iot_events.max_temp_c) COMMENT = 'Average max in-transit temperature (C)',
+    source_definitions.source_metric_value AS MAX(source_definitions.metric_value) COMMENT = 'Metric value for a source-system definition',
+    source_definitions.variance_vs_governed_pct AS MAX(source_definitions.variance_pct) COMMENT = 'Variance vs governed value in percent'
   )
 
   COMMENT = 'SupplyGraph AI: Supply Chain Ontology for governed conversational analytics'
@@ -167,6 +278,15 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     are registered as dimensions on the shipments table. When querying shipments, all needed columns are available directly.
     Similarly, supplier_performance has supplier_name, supplier_nation, supplier_region as dimensions.
     And supplier_parts has supplier_region, supplier_name, supplier_nation as dimensions.
+    EXTENDED ONTOLOGY (plants, freight, duty, IoT and source-system definitions are SYNTHETIC enrichment):
+    Ontology chain: Supplier -> Supplier-Part -> Part -> Plant; Shipment -> Part -> Plant; Shipment -> Order -> Customer.
+    Plant performance questions: use the shipments table grouped by plant_name (on-time, spend, lead time).
+    Days of inventory: use part_inventory. Days of inventory = SUM(available_quantity) / (SUM(quantity_shipped) / MAX(demand_days)).
+    Never average per-part ratios. Group by plant_name, part_type or brand on part_inventory.
+    Landed cost: use shipment_costs. landed_cost = purchase_cost + freight_cost + duty_cost. Landed cost per unit = SUM(landed_cost) / SUM(quantity).
+    IoT shipment risk: use iot_events. temperature_excursion_rate = AVG(temp_excursion_flag)*100; condition_risk_rate = AVG(condition_risk_flag)*100.
+    Source-system definition questions: use source_definitions (metric_name, source_system, definition_text, metric_value, variance_pct).
+    The GOVERNED source_system row is the canonical definition used everywhere else in this semantic view.
   '
 
   AI_VERIFIED_QUERIES (
@@ -217,5 +337,29 @@ CREATE OR REPLACE SEMANTIC VIEW SUPPLYGRAPH_AI.SUPPLY_CHAIN.SUPPLY_CHAIN_ONTOLOG
     cross_region AS (
       QUESTION 'What percentage of shipments are cross-region?'
       SQL 'SELECT CASE WHEN supplier_region = customer_region THEN ''Same Region'' ELSE ''Cross Region'' END AS shipment_type, COUNT(*) AS shipment_count, ROUND(SUM(net_revenue), 2) AS total_spend, ROUND(AVG(delivery_lead_time_days), 1) AS avg_lead_time, ROUND(AVG(is_on_time) * 100, 2) AS on_time_pct FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SHIPMENTS GROUP BY shipment_type ORDER BY shipment_count DESC'
+    ),
+    plant_performance AS (
+      QUESTION 'How does each plant perform on on-time delivery, spend and lead time?'
+      SQL 'SELECT plant_name, plant_region, ROUND(AVG(is_on_time) * 100, 2) AS on_time_delivery_rate, ROUND(SUM(net_revenue), 2) AS total_spend, ROUND(AVG(delivery_lead_time_days), 1) AS avg_lead_time, COUNT(*) AS shipment_count FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SHIPMENTS GROUP BY plant_name, plant_region ORDER BY on_time_delivery_rate DESC'
+    ),
+    days_of_inventory_by_plant AS (
+      QUESTION 'What is the days of inventory by plant?'
+      SQL 'SELECT plant_name, ROUND(SUM(available_quantity) / NULLIF(SUM(quantity_shipped) / MAX(demand_days), 0), 1) AS days_of_inventory, SUM(available_quantity) AS available_quantity, SUM(quantity_shipped) AS quantity_shipped FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_PART_INVENTORY GROUP BY plant_name ORDER BY days_of_inventory DESC'
+    ),
+    landed_cost_breakdown AS (
+      QUESTION 'What is the total landed cost by supplier region broken down into purchase, freight and duty?'
+      SQL 'SELECT supplier_region, ROUND(SUM(purchase_cost), 2) AS purchase_cost, ROUND(SUM(freight_cost), 2) AS freight_cost, ROUND(SUM(duty_cost), 2) AS duty_cost, ROUND(SUM(landed_cost), 2) AS total_landed_cost FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SHIPMENT_LANDED_COST GROUP BY supplier_region ORDER BY total_landed_cost DESC'
+    ),
+    landed_cost_per_unit_by_mode AS (
+      QUESTION 'What is the landed cost per unit by ship mode?'
+      SQL 'SELECT ship_mode, ROUND(SUM(landed_cost) / NULLIF(SUM(quantity), 0), 2) AS landed_cost_per_unit, ROUND(SUM(freight_cost) / NULLIF(SUM(quantity), 0), 2) AS freight_per_unit, ROUND(SUM(landed_cost), 2) AS total_landed_cost FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_SHIPMENT_LANDED_COST GROUP BY ship_mode ORDER BY landed_cost_per_unit DESC'
+    ),
+    iot_risk_by_ship_mode AS (
+      QUESTION 'Which ship modes have the highest IoT temperature excursion and shipment risk rates?'
+      SQL 'SELECT ship_mode, ROUND(AVG(temp_excursion_flag) * 100, 2) AS temperature_excursion_rate, ROUND(AVG(shock_event_flag) * 100, 2) AS shock_event_rate, ROUND(AVG(condition_risk_flag) * 100, 2) AS condition_risk_rate, SUM(condition_risk_flag) AS at_risk_shipments FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.SYN_IOT_SHIPMENT_EVENTS GROUP BY ship_mode ORDER BY condition_risk_rate DESC'
+    ),
+    source_definition_comparison AS (
+      QUESTION 'How do the source systems define on-time delivery and how does each value compare to the governed definition?'
+      SQL 'SELECT source_system, definition_text, metric_value, governed_value, variance_pct, is_governed FROM SUPPLYGRAPH_AI.SUPPLY_CHAIN.V_METRIC_DEFINITION_COMPARISON WHERE metric_name = ''On-Time Delivery'' ORDER BY is_governed DESC, source_system'
     )
   );

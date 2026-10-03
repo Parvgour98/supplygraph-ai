@@ -1,122 +1,123 @@
 # Architecture: SupplyGraph AI
 
-SupplyGraph AI is a four-layer, Snowflake-native architecture. No external infrastructure, ETL
-tools, API keys or copied data are involved.
+Four layers, all Snowflake-native. Original TPC-H data and labelled synthetic enrichment
+feed one governed semantic view, which is the only path from data to an answer.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ L4  APPLICATION: Streamlit in Snowflake (SUPPLYGRAPH_AI_APP, COMPUTE_WH)     │
-│     Hero Demo · Executive · Supplier · Regional · Ask SupplyGraph ·          │
-│     Metrics & Evidence · Persona Views                                       │
-│        │ SEMANTIC_VIEW() queries          │ Cortex Analyst REST API          │
-└────────┼──────────────────────────────────┼──────────────────────────────────┘
-         ▼                                  ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ L3  GOVERNED SEMANTIC LAYER: SUPPLY_CHAIN_ONTOLOGY (Semantic View)           │
-│     7 logical tables · 7 relationships · 26 facts · 46 dimensions ·          │
-│     20 metrics · 12 verified queries · AI_SQL_GENERATION instructions        │
-└────────┬─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ L4 APPLICATION: Streamlit in Snowflake (SUPPLYGRAPH_AI_APP, COMPUTE_WH)        │
+│    Hero Demo · Executive · Plant Network · Supplier · Regional · Ask ·         │
+│    Definition Conflict · Metrics & Evidence · Persona Views                    │
+│        │ SEMANTIC_VIEW() queries              │ Cortex Analyst REST API        │
+└────────┼──────────────────────────────────────┼────────────────────────────────┘
+         ▼                                      ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ L3 GOVERNED SEMANTIC LAYER: SUPPLY_CHAIN_ONTOLOGY                              │
+│    12 logical tables · 11 relationships · 44 facts · 80 dimensions ·           │
+│    39 metrics · 18 verified queries · AI_SQL_GENERATION                        │
+└────────┬───────────────────────────────────────────────────────────────────────┘
          ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ L2  CURATED VIEWS (zero-copy): V_SHIPMENTS · V_ORDERS · V_SUPPLIERS ·        │
-│     V_PARTS · V_CUSTOMERS · V_SUPPLIER_PARTS · V_SUPPLIER_PERFORMANCE ·      │
-│     V_REGIONS                                                                │
-└────────┬─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────┬─────────────────────────────────────┐
+│ L2 CURATED VIEWS (zero-copy)             │ L2 SYNTHETIC ENRICHMENT (SYN_)       │
+│  V_SHIPMENTS V_ORDERS V_SUPPLIERS        │  SYN_PLANTS            (ERP)         │
+│  V_PARTS V_CUSTOMERS V_SUPPLIER_PARTS    │  SYN_FREIGHT_RATES     (TMS)         │
+│  V_SUPPLIER_PERFORMANCE V_REGIONS        │  SYN_DUTY_RATES        (customs)     │
+│  V_PART_INVENTORY                        │  SYN_IOT_SHIPMENT_EVENTS (IoT)       │
+│  V_SHIPMENT_LANDED_COST                  │  SOURCE_SYSTEM_DEFINITIONS (metadata)│
+│  V_METRIC_DEFINITION_COMPARISON          │                                      │
+└────────┬─────────────────────────────────┴─────────────────────────────────────┘
          ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ L1  SOURCE: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1 (read-only share)                 │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ L1 SOURCE: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1 (read-only)                          │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## L1: Source
+## L1: Source (original TPC-H)
 
 | Table | Rows | Supply-chain meaning |
 |---|---|---|
 | LINEITEM | 6,001,215 | Shipment line: qty, price, ship/commit/receipt dates, mode, return flag |
-| ORDERS | 1,500,000 | Customer order with date, priority and status |
+| ORDERS | 1,500,000 | Customer order |
 | PARTSUPP | 800,000 | Supplier-part availability and supply cost |
 | PART | 200,000 | Product catalogue |
-| CUSTOMER | 150,000 | Buyer with market segment |
+| CUSTOMER | 150,000 | Buyer |
 | SUPPLIER | 10,000 | Vendor |
 | NATION / REGION | 25 / 5 | Geography |
 
-## L2: Curated views
+## L2: Curated views and synthetic enrichment
 
-Views rename columns to business language and compute line-level business facts once:
-`NET_REVENUE`, `GROSS_REVENUE`, `DELIVERY_LEAD_TIME_DAYS`, `SHIPPING_LEAD_TIME_DAYS`,
-`PROCESSING_TIME_DAYS`, `IS_ON_TIME`, `IS_LATE`, `DAYS_LATE`, `RETURN_STATUS`, `INVENTORY_VALUE`,
-`MARGIN_PERCENTAGE`. `V_SUPPLIER_PERFORMANCE` pre-aggregates the supplier scorecard.
+**TPC-H views** rename columns to business language and compute line-level facts once
+(`NET_REVENUE`, `DELIVERY_LEAD_TIME_DAYS`, `IS_ON_TIME`, `DAYS_LATE`, …). V_PARTS, V_SUPPLIER_PARTS
+and V_SHIPMENTS gained `PLANT_KEY / PLANT_NAME / PLANT_REGION` columns. No existing column changed,
+which is why all earlier validations still pass unchanged.
 
-**Design decision: denormalised `V_SHIPMENTS`.** Supplier, customer, part and order attributes are
-carried on the shipment line. This keeps every shipment-grain question answerable from one logical
-table, which is the shape Cortex Analyst handles most reliably.
+**New views**
+
+| View | Grain | Logic | Origin |
+|---|---|---|---|
+| V_PART_INVENTORY | part | availability (PARTSUPP) vs demand (LINEITEM) over 2,406 days | TPC-H |
+| V_SHIPMENT_LANDED_COST | shipment line | purchase (qty × supply cost) + freight (qty × tariff) + duty (purchase × tariff) | TPC-H + SYNTHETIC |
+| V_METRIC_DEFINITION_COMPARISON | metric × source system | each system's formula evaluated live on LINEITEM vs the governed formula | Illustrative definitions, real values |
+
+**Synthetic enrichment (deterministic, reproducible, labelled SYNTHETIC in comments, UI and docs)**
+
+| Table | Simulated source | Rule |
+|---|---|---|
+| SYN_PLANTS | ERP plant master | 10 plants in TPC-H nations; `PLANT_KEY = MOD(PART_KEY, 10) + 1` |
+| SYN_FREIGHT_RATES | Logistics TMS tariff | USD/unit by ship mode × lane (DOMESTIC / CROSS_REGION) |
+| SYN_DUTY_RATES | Customs tariff | Rate by origin region × destination (plant) region; 0 if same region |
+| SYN_IOT_SHIPMENT_EVENTS | IoT tracker telemetry | Hash-seeded temperature/shock/GPS per line; excursion probability rises with slower modes; **delay alert = real TPC-H lateness** |
+| SOURCE_SYSTEM_DEFINITIONS | Metric definitions per system | 3 metrics × ERP / TMS / supplier portal / GOVERNED |
 
 ## L3: Semantic view (the ontology)
-
-The semantic view does three jobs:
-
-1. **Ontology**: entities (logical tables with primary keys), relationships (foreign-key graph),
-   synonyms ("vendors" → suppliers, "OTD" → on-time delivery) and comments.
-2. **Governance**: each metric is defined once (for example `on_time_delivery_rate =
-   AVG(is_on_time) * 100`) and every consumer, human or AI, reuses that definition.
-3. **AI grounding**: `AI_SQL_GENERATION` gives Cortex Analyst business rules and valid values, and
-   `AI_VERIFIED_QUERIES` provide 12 vetted question→SQL pairs.
 
 ### Relationship graph
 
 ```
-shipments ──shipment_to_order──────▶ orders ──order_to_customer──▶ customers
-    │ ──shipment_to_supplier─────▶ suppliers ◀──perf_to_supplier── supplier_performance
-    │ ──shipment_to_part─────────▶ parts                    ▲
-supplier_parts ──supplier_part_to_supplier──────────────────┘
-supplier_parts ──supplier_part_to_part──────▶ parts
+supplier_parts ─supplier_part_to_supplier─▶ suppliers ◀─perf_to_supplier── supplier_performance
+supplier_parts ─supplier_part_to_part─────▶ parts ─part_to_plant─▶ plants
+part_inventory ─inventory_to_part─────────▶ parts
+shipments ─shipment_to_supplier─▶ suppliers
+shipments ─shipment_to_part─────▶ parts (─▶ plants)
+shipments ─shipment_to_order────▶ orders ─order_to_customer─▶ customers
+shipment_costs ─cost_to_shipment─▶ shipments
+iot_events ─iot_to_shipment──────▶ shipments
+source_definitions   (stand-alone governance metadata)
 ```
+
+**Design decision: one path to Plant.** Plant is an attribute of Part, so Shipment reaches Plant
+through Part. Adding a direct Shipment → Plant relationship would create two join paths and an
+ambiguous semantic view.
 
 ### Key finding: dimension registration for Cortex Analyst
 
-The first version passed only 6/15 Analyst questions. Inspecting the generated SQL showed the
-pattern: Analyst emits one CTE per logical table, and that CTE selects **only columns registered
-as facts or dimensions on that logical table**. The outer query then referenced denormalised
-columns, such as `ORDER_YEAR` on shipments or `SUPPLIER_NAME` on supplier_performance, that the
-CTE had not selected, causing `invalid identifier` errors.
+Cortex Analyst emits one CTE per logical table, and that CTE selects **only columns registered
+as facts or dimensions on that logical table**. Denormalised columns referenced by the outer query
+must therefore be registered on every logical table that physically holds them. Applying this
+took the original question set from 6/15 → 9/15 → 15/15. Applying it from the start to the
+enrichment tables (for example `plant_name` on shipments, shipment_costs, iot_events and
+part_inventory) gave 7/7 on the new questions.
 
-Fixes, applied in two iterations:
-1. Fact and dimension names were made identical to physical column names (6 → 9 of 15).
-2. Every denormalised column was registered as a dimension on **each** logical table that
-   physically holds it (9 → **15 of 15**).
+### Governed metric design notes
 
-The resulting duplication (for example `SUPPLIER_NAME` on four tables) is intentional.
+- **Days of Inventory** is a *ratio of sums* (`SUM(available) / (SUM(shipped) / demand_days)`).
+  The per-part ratio is deliberately not exposed as a fact, so it can't be averaged incorrectly.
+- **Landed Cost** components are rounded per line, and the metric sums the rounded components. The
+  independent validation recomputes from raw tables with the same rule and matches exactly.
 
 ## L4: Application
 
 | Path | Mechanism | Governance guarantee |
 |---|---|---|
-| KPI tiles, charts, persona views | `SELECT * FROM SEMANTIC_VIEW(... METRICS ... DIMENSIONS ...)` | Metric expression comes from the semantic view, never from app code |
-| Ask SupplyGraph, Hero Demo | Cortex Analyst REST API (`_snowflake.send_snow_api_request`, `semantic_view` = ontology FQN) | SQL generated from the semantic view and shown to the user |
-| Analyst unreachable | Matching **verified query** from the semantic view, labelled as such | No unverified or LLM-invented numbers; unmatched questions show an explicit error |
-| Supplier scorecard table | Direct read of `V_SUPPLIER_PERFORMANCE` (registered in the semantic view as `supplier_performance`) | Same object the semantic view exposes |
+| KPIs, charts, persona views, plant network | `SELECT * FROM SEMANTIC_VIEW(...)` | Metric expressions come only from the semantic view |
+| Ask SupplyGraph, Hero Demo | Cortex Analyst REST API, `semantic_view` = ontology | SQL generated from the ontology and displayed |
+| Analyst unreachable | Matching verified query, labelled | No invented numbers; otherwise an explicit error |
+| Definition Conflict tab | `V_METRIC_DEFINITION_COMPARISON` | Shows the ungoverned spread, then the governed value |
 
-### Consistency mechanisms visible in the app
-
-- **Hero Demo**: three persona phrasings go through live Cortex Analyst, each result is compared
-  with a direct `SEMANTIC_VIEW()` query, and the app shows `IDENTICAL`.
-- **Persona Views**: all personas render the same `governed_kpis()` result, with a SHA-256
-  fingerprint shown as a badge (`ec8773a9f799`).
-- **Metrics & Evidence**: semantic-view values are recomputed with independent direct SQL and
-  shown as MATCH/MISMATCH.
-
-## Data flow for a conversational question
-
-```
-User question
-  └─▶ Cortex Analyst (semantic_view = SUPPLY_CHAIN_ONTOLOGY)
-        ├─ interprets with synonyms, metric definitions, verified queries
-        └─▶ SQL ──▶ executed on COMPUTE_WH ──▶ result table
-                     └─▶ app shows: interpretation · answer · SQL · metric definitions · source
-```
+Consistency proofs visible in the app: Hero Demo (**IDENTICAL**), persona KPI fingerprint
+(`fcb10b862e85`), and Metrics & Evidence live MATCH checks for 7 KPIs.
 
 ## Security and governance notes
 
-- The app runs with owner's rights inside Snowflake; there are no credentials in code.
-- The `_snowflake` module is used only for the Cortex Analyst call.
-- Not implemented (documented limitation): row-access policies, masking policies, custom RBAC roles.
+No credentials in code; the app runs inside Snowflake with owner's rights. Not implemented
+(documented): row-access policies, masking policies, custom RBAC roles, live source-system connectors.

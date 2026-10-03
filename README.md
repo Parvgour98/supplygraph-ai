@@ -9,25 +9,35 @@ Snowflake CoCo CLI Hackathon, GCC Edition · Challenge 5
 
 ## 1. Problem
 
-Planning, Procurement and Logistics teams ask the same questions ("How reliable are our deliveries?",
-"Where is our spend concentrated?") but answer them with their own SQL, filters and definitions.
-"On-time" means receipt date to one team and ship date to another. Spend includes discount in one
-dashboard but not the next. The numbers disagree, trust erodes, and meetings turn into reconciliation
-exercises.
+Supply-chain data lives in separate ERP, logistics, supplier and IoT systems, each with its own
+definition of the same metric. We demonstrate this live on the same 6 million shipment lines:
+
+| Metric | ERP | Logistics TMS | Supplier portal | **Governed** |
+|---|---|---|---|---|
+| On-Time Delivery | 49.59% (shipped by commit date) | 38.44% (received within commit + 2-day grace) | 100.00% (received within 30 days of ship) | **36.79%** (received by commit date) |
+| Fill Rate | 49.93% (line status F) | n/a | 75.36% (quantity-weighted) | **75.36%** (lines not returned) |
+| Total Spend | $229.58B (gross) | $226.83B (after discount, incl. tax) | n/a | **$218.10B** (net of discount) |
+
+Asking "what is our on-time delivery?" returns anything from 36.79% to 100%, depending on which
+system you ask.
 
 ## 2. Solution
 
-SupplyGraph AI models the supply chain as an **ontology inside a Snowflake Semantic View** and makes
-that semantic view the only path to a number:
+SupplyGraph AI expresses the supply chain as an **industry ontology inside a Snowflake Semantic
+View** and makes that semantic view the only path to a number:
 
-- **Ontology**: Supplier, Part, Supplier-Part, Customer, Order, Shipment and Supplier Performance
-  as logical tables with keys, relationships, synonyms and comments.
-- **Governed metrics**: On-Time Delivery, Fill Rate, Total Spend, Average Lead Time, Supplier
-  Performance and Spend Concentration, each defined once with a canonical SQL expression.
-- **Conversational analytics**: **Cortex Analyst** turns natural-language questions into SQL
-  grounded in the semantic view, guided by 12 verified queries and custom SQL-generation instructions.
-- **Streamlit in Snowflake app**: every KPI and chart is a `SEMANTIC_VIEW()` query, and every
-  conversational answer shows its generated SQL, the source and the metric definitions used.
+- **Ontology:** Supplier → Supplier-Part → Part → **Plant**; Shipment → Part → Plant;
+  Shipment → Order → Customer. Plus Supplier Performance, Part Inventory, Shipment Landed Cost,
+  IoT Shipment Event and Source-System Definition, as 12 logical tables with keys, relationships,
+  synonyms and comments.
+- **Canonical metrics** defined once: On-Time Delivery, Fill Rate, **Days of Inventory**,
+  **Landed Cost**, Total Spend, Average Lead Time, Supplier Performance, Spend Concentration and
+  IoT shipment risk (39 governed metrics in total).
+- **Governed conversational analytics:** Cortex Analyst answers natural-language and
+  cross-domain questions grounded in the ontology, guided by 18 verified queries.
+- **Streamlit in Snowflake app:** every KPI is a `SEMANTIC_VIEW()` query. Every answer shows its
+  SQL, metric definition and source, and the app proves live that Planning, Procurement and
+  Logistics get identical answers.
 
 ### Hero demo: "One question, three personas"
 
@@ -37,31 +47,51 @@ that semantic view the only path to a number:
 | Procurement | *Which supplier regions deliver on time most often? Show on-time delivery percentage by supplier region.* |
 | Logistics | *Show the OTD percentage for each source region.* |
 
-Cortex Analyst resolves all three phrasings to the same governed metric
-(`on_time_delivery_rate = AVG(is_on_time) * 100`) over the same ontology dimension
-(`supplier_region`). The app compares the three results with a direct `SEMANTIC_VIEW()` query and
-prints **IDENTICAL**.
+Cortex Analyst resolves all three to the governed metric `on_time_delivery_rate = AVG(is_on_time) * 100`
+on the ontology dimension `supplier_region`, and the app shows **IDENTICAL** against a direct
+`SEMANTIC_VIEW()` query.
 
 ---
 
-## 3. Architecture
+## 3. Data: what is real, what is synthetic, what is governed
+
+| Category | Content | Objects |
+|---|---|---|
+| **Original TPC-H** | Suppliers, parts, supplier-parts, customers, orders, 6M shipment lines, nations, regions | `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` via `V_*` views |
+| **Genuine metric on TPC-H** | Days of Inventory (PARTSUPP availability vs LINEITEM demand) | `V_PART_INVENTORY` |
+| **SYNTHETIC enrichment** | ERP plant master (10 plants), logistics freight tariff, customs duty tariff, IoT shipment telemetry | `SYN_PLANTS`, `SYN_FREIGHT_RATES`, `SYN_DUTY_RATES`, `SYN_IOT_SHIPMENT_EVENTS` |
+| **Illustrative definitions** | How ERP / TMS / supplier portal define metrics; values **computed live on TPC-H** | `SOURCE_SYSTEM_DEFINITIONS`, `V_METRIC_DEFINITION_COMPARISON` |
+| **Governed canonical definitions** | Every metric used by dashboards, personas and Cortex Analyst | `SUPPLY_CHAIN_ONTOLOGY` semantic view |
+
+Synthetic rules (deterministic and reproducible):
+- **Plant assignment:** `PLANT_KEY = MOD(PART_KEY, 10) + 1`.
+- **Freight:** quantity × rate per unit, by ship mode and lane type. A lane is DOMESTIC when the
+  supplier region equals the plant region, otherwise CROSS_REGION.
+- **Duty:** purchase cost × duty rate, by supplier region → plant region; 0 within the same region.
+- **IoT:** temperature, shock and GPS values are hash-seeded per shipment. The delay alert is
+  derived from the shipment's **real** TPC-H receipt vs commit dates.
+
+---
+
+## 4. Architecture
 
 ```
- Streamlit in Snowflake  (SUPPLYGRAPH_AI_APP)
- ├─ Hero Demo ─ Executive ─ Supplier ─ Regional ─ Ask SupplyGraph ─ Metrics & Evidence ─ Personas
- │        │                                         │
- │  SEMANTIC_VIEW() queries                Cortex Analyst REST API
- │        │                                (/api/v2/cortex/analyst/message)
- ▼        ▼                                         ▼
+ Streamlit in Snowflake (SUPPLYGRAPH_AI_APP)
+   Hero Demo · Executive · Plant Network · Supplier · Regional · Ask SupplyGraph ·
+   Definition Conflict · Metrics & Evidence · Persona Views
+        │ SEMANTIC_VIEW() queries                 │ Cortex Analyst REST API
+        ▼                                          ▼
  SEMANTIC VIEW  SUPPLY_CHAIN_ONTOLOGY
-   7 logical tables · 7 relationships · 26 facts · 46 dimensions · 20 metrics
-   12 verified queries · AI_SQL_GENERATION instructions
- ▼
- CURATED VIEWS (zero-copy, SUPPLYGRAPH_AI.SUPPLY_CHAIN)
-   V_SHIPMENTS · V_ORDERS · V_SUPPLIERS · V_PARTS · V_CUSTOMERS
-   V_SUPPLIER_PARTS · V_SUPPLIER_PERFORMANCE · V_REGIONS
- ▼
- SNOWFLAKE_SAMPLE_DATA.TPCH_SF1  (LINEITEM 6.0M · ORDERS 1.5M · PARTSUPP 800K · PART 200K
+   12 logical tables · 11 relationships · 44 facts · 80 dimensions · 39 metrics
+   18 verified queries · AI_SQL_GENERATION instructions
+        ▼
+ VIEWS (zero-copy)                                   SYNTHETIC ENRICHMENT (labelled SYN_)
+   V_SHIPMENTS · V_ORDERS · V_SUPPLIERS · V_PARTS      SYN_PLANTS · SYN_FREIGHT_RATES
+   V_CUSTOMERS · V_SUPPLIER_PARTS · V_REGIONS          SYN_DUTY_RATES · SYN_IOT_SHIPMENT_EVENTS
+   V_SUPPLIER_PERFORMANCE · V_PART_INVENTORY           SOURCE_SYSTEM_DEFINITIONS
+   V_SHIPMENT_LANDED_COST · V_METRIC_DEFINITION_COMPARISON
+        ▼
+ SNOWFLAKE_SAMPLE_DATA.TPCH_SF1 (LINEITEM 6.0M · ORDERS 1.5M · PARTSUPP 800K · PART 200K ·
                                   CUSTOMER 150K · SUPPLIER 10K · NATION 25 · REGION 5)
 ```
 
@@ -69,175 +99,188 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 4. Ontology
+## 5. Ontology
 
 ```
- REGION ─contains─▶ NATION ─locates─▶ SUPPLIER ◀─offered by─ SUPPLIER-PART ─offers─▶ PART
-                         └─locates─▶ CUSTOMER                      ▲                   ▲
-                                         │ places                  │ scored as         │ shipped as
-                                         ▼                   SUPPLIER PERFORMANCE      │
-                                       ORDER ─contains─▶ SHIPMENT ─shipped by─▶ SUPPLIER
-                                                            └────────── of part ───────┘
+                   SUPPLIER ◀── supplier_part_to_supplier ── SUPPLIER-PART ── supplier_part_to_part ──▶ PART ── part_to_plant ──▶ PLANT*
+                      ▲                                                                                  ▲
+ SUPPLIER PERFORMANCE ┘ perf_to_supplier                                         inventory_to_part ── PART INVENTORY
+                      ▲                                                                                  │
+                      └── shipment_to_supplier ── SHIPMENT ── shipment_to_part ─────────────────────────┘
+                                                    │  ▲  ▲
+                              shipment_to_order ────┘  │  └── iot_to_shipment ── IOT SHIPMENT EVENT*
+                                     ▼                 └───── cost_to_shipment ── SHIPMENT LANDED COST (freight/duty*)
+                                   ORDER ── order_to_customer ──▶ CUSTOMER
+ (* = synthetic enrichment)          SOURCE-SYSTEM DEFINITION (metadata for the governed metrics)
 ```
 
-| Entity | Logical table | Key | Relationships in the semantic view |
+| Entity | Logical table | Key | Origin |
 |---|---|---|---|
-| Shipment (line item) | `shipments` → V_SHIPMENTS | ORDER_KEY + LINE_NUMBER | → orders, → suppliers, → parts |
-| Order | `orders` → V_ORDERS | ORDER_KEY | → customers |
-| Customer | `customers` → V_CUSTOMERS | CUSTOMER_KEY | (via nation and region attributes) |
-| Supplier | `suppliers` → V_SUPPLIERS | SUPPLIER_KEY | referenced by shipments, supplier_parts, supplier_performance |
-| Part | `parts` → V_PARTS | PART_KEY | referenced by shipments, supplier_parts |
-| Supplier-Part | `supplier_parts` → V_SUPPLIER_PARTS | PART_KEY + SUPPLIER_KEY | → suppliers, → parts |
-| Supplier Performance | `supplier_performance` → V_SUPPLIER_PERFORMANCE | SUPPLIER_KEY | → suppliers |
+| Supplier | `suppliers` | SUPPLIER_KEY | TPC-H |
+| Supplier-Part | `supplier_parts` | PART_KEY + SUPPLIER_KEY | TPC-H |
+| Part | `parts` | PART_KEY | TPC-H |
+| **Plant** | `plants` | PLANT_KEY | SYNTHETIC |
+| Shipment | `shipments` | ORDER_KEY + LINE_NUMBER | TPC-H |
+| Order | `orders` | ORDER_KEY | TPC-H |
+| Customer | `customers` | CUSTOMER_KEY | TPC-H |
+| Supplier Performance | `supplier_performance` | SUPPLIER_KEY | TPC-H (aggregated) |
+| Part Inventory | `part_inventory` | PART_KEY | TPC-H |
+| Shipment Landed Cost | `shipment_costs` | ORDER_KEY + LINE_NUMBER | TPC-H + SYNTHETIC tariffs |
+| IoT Shipment Event | `iot_events` | ORDER_KEY + LINE_NUMBER | SYNTHETIC |
+| Source-System Definition | `source_definitions` | METRIC_NAME + SOURCE_SYSTEM | Illustrative (values live on TPC-H) |
 
-**Hierarchies:** Region → Nation → Supplier/Customer (geography); Order Year → Quarter → Month → Date
-(time); Manufacturer → Brand → Part (product).
+**Hierarchies:** Region → Nation → Supplier / Customer / Plant · Plant Region → Plant → Part ·
+Manufacturer → Brand → Part · Order Year → Quarter → Month → Date.
 
-**Region/Nation:** stored as attributes on Supplier, Customer and Shipment rather than as a separate
-logical table, because a single Region table would be ambiguous between supplier and customer
-geography.
-
-**Plant / fulfilment centre: deliberately not modelled.** TPC-H contains no facility, warehouse or
-plant data. Inventing one would create misleading relationships, so the limitation is documented
-instead.
-
----
-
-## 5. Canonical metrics
-
-| Metric | Semantic view object | Definition |
-|---|---|---|
-| Total Spend | `shipments.total_spend` | `SUM(net_revenue)`, where `net_revenue = extended_price × (1 − discount)` |
-| On-Time Delivery Rate | `shipments.on_time_delivery_rate` | `AVG(is_on_time) × 100`, where on time means `receipt_date ≤ commit_date` |
-| Fill Rate | `shipments.fill_rate` | `(1 − AVG(return_flag = 'R')) × 100` |
-| Average Lead Time | `shipments.average_lead_time` | `AVG(receipt_date − order_date)` in days |
-| Supplier Performance Score | `supplier_performance.supplier_performance_score` | `0.40·OTD% + 0.35·Fill% + 0.25·(100 − Return%)` |
-| Spend Concentration | derived from `total_spend` | supplier spend ÷ total spend × 100 |
-| Return Rate, Shipping Time, Processing Time, Inventory Value, Margin, counts | see `sql/03_semantic_view.sql` | 20 metrics in total |
+Plant is reached **through Part**, not linked to Shipment directly. This keeps a single
+unambiguous join path in the semantic view.
 
 ---
 
-## 6. Snowflake components
+## 6. Canonical metrics
 
-| Component | Object | Role |
-|---|---|---|
-| Database / schema | `SUPPLYGRAPH_AI.SUPPLY_CHAIN` | Project namespace |
-| Views (8) | `V_*` | Zero-copy curated layer over TPC-H; no data duplicated |
-| **Semantic View** | `SUPPLY_CHAIN_ONTOLOGY` | Ontology and governed metrics |
-| **Cortex Analyst** | REST API with `semantic_view` | Natural-language-to-SQL grounded in the ontology |
-| Verified queries (12) | `AI_VERIFIED_QUERIES` | Pre-validated SQL for core business questions |
-| SQL-generation instructions | `AI_SQL_GENERATION` | Business rules and value lists for Analyst |
-| **Streamlit in Snowflake** | `SUPPLYGRAPH_AI_APP` | Demo application on warehouse `COMPUTE_WH` |
-| Stage | `STREAMLIT_STAGE` | App source (`streamlit_app.py`, `environment.yml`) |
+| Metric | Semantic view object | Definition | Data |
+|---|---|---|---|
+| **On-Time Delivery** | `shipments.on_time_delivery_rate` | `AVG(receipt_date ≤ commit_date) × 100` | TPC-H |
+| **Fill Rate** | `shipments.fill_rate` | `(1 − AVG(return_flag = 'R')) × 100` | TPC-H |
+| **Days of Inventory** | `part_inventory.days_of_inventory` | `SUM(available_qty) / (SUM(qty_shipped) / demand_days)`, demand_days = 2,406 | TPC-H |
+| **Landed Cost** | `shipment_costs.total_landed_cost` | `SUM(purchase + freight + duty)`; purchase = qty × supply_cost | TPC-H + SYNTHETIC tariffs |
+| Total Spend | `shipments.total_spend` | `SUM(extended_price × (1 − discount))` | TPC-H |
+| Average Lead Time | `shipments.average_lead_time` | `AVG(receipt_date − order_date)` | TPC-H |
+| Supplier Performance Score | `supplier_performance.supplier_performance_score` | `0.40·OTD + 0.35·Fill + 0.25·(100 − Return)` | TPC-H |
+| Spend Concentration | derived from `total_spend` | supplier spend ÷ total spend | TPC-H |
+| Landed Cost per Unit | `shipment_costs.landed_cost_per_unit` | `SUM(landed_cost) / SUM(quantity)` | TPC-H + SYNTHETIC |
+| Temperature Excursion Rate | `iot_events.temperature_excursion_rate` | `AVG(max_temp_c > 8) × 100` | SYNTHETIC |
+| IoT Condition Risk Rate | `iot_events.condition_risk_rate` | `AVG(temp excursion OR shock) × 100` | SYNTHETIC |
 
-No external services, ETL tools, API keys or copied data are used.
+Full list (39 metrics): `sql/05_semantic_view.sql`.
 
 ---
 
-## 7. How Cortex Code (CoCo) CLI was used
+## 7. Snowflake components
 
-The whole solution was built, debugged and validated from the CoCo CLI:
+| Component | Objects |
+|---|---|
+| Database / schema | `SUPPLYGRAPH_AI.SUPPLY_CHAIN` |
+| Views (11, zero-copy) | 8 core `V_*` views + `V_PART_INVENTORY`, `V_SHIPMENT_LANDED_COST`, `V_METRIC_DEFINITION_COMPARISON` |
+| Tables (5, synthetic enrichment) | `SYN_PLANTS` (10), `SYN_FREIGHT_RATES` (14), `SYN_DUTY_RATES` (25), `SOURCE_SYSTEM_DEFINITIONS` (10), `SYN_IOT_SHIPMENT_EVENTS` (6,001,215) |
+| **Semantic View** | `SUPPLY_CHAIN_ONTOLOGY` |
+| **Cortex Analyst** | REST API with `semantic_view` |
+| **Streamlit in Snowflake** | `SUPPLYGRAPH_AI_APP` on `COMPUTE_WH`, Streamlit 1.52.0 |
+| Stage | `STREAMLIT_STAGE` |
+
+No external services, API keys or credentials are used.
+
+---
+
+## 8. How Cortex Code (CoCo) CLI was used
 
 | Step | CoCo capability |
 |---|---|
-| Environment discovery (role, warehouse, databases, Cortex model availability) | SQL execution through the active connection |
-| Semantic view DDL syntax research | `cortex search docs` |
-| Building views, semantic view, stage and Streamlit | SQL execution, `PUT` upload |
-| Testing NL questions against the ontology | `cortex analyst query --view=...` |
-| **Root-cause analysis of Analyst failures** | Inspecting generated SQL. Analyst builds per-table CTEs that only select columns registered as facts or dimensions *on that table*, so denormalised columns had to be registered on every table that holds them. Pass rate went 6/15 → 9/15 → **15/15** over three iterations. |
-| Headless end-to-end test of the app (all tabs, hero demo, chat, personas, fallback path) | Python REPL with Streamlit `AppTest` |
-| Documentation, Git commit | File tools and `git` |
+| Environment discovery, Cortex model availability | SQL execution through the active connection |
+| Semantic view DDL research | `cortex search docs` |
+| Building views, synthetic enrichment, semantic view, app | SQL execution, `PUT` |
+| Testing NL questions | `cortex analyst query --view=...` |
+| **Analyst hardening** | Diagnosed that Analyst's per-table CTEs only select columns registered on that logical table; registered denormalised dimensions on every holding table (6/15 → 9/15 → 15/15), then applied the same pattern to the enrichment tables (22/22) |
+| Gap analysis vs the exact challenge brief | Requirement-by-requirement review, leading to the Plant / DOI / Landed Cost / IoT / definitions enrichment |
+| Headless end-to-end app test | Python REPL + Streamlit `AppTest` (13 scenarios) |
+| Validation, docs, Git commit | SQL, file tools, `git` |
 
 ---
 
-## 8. Validation results
+## 9. Validation results
 
-Full report: [VALIDATION.md](VALIDATION.md). Reproducible script: [sql/05_validation.sql](sql/05_validation.sql).
+Full report: [VALIDATION.md](VALIDATION.md). Reproducible: [sql/07_validation.sql](sql/07_validation.sql).
 
 | Check | Result |
 |---|---|
-| Cortex Analyst natural-language questions | **15/15** generate executable SQL that returns results |
-| Semantic-view metrics vs independent SQL on raw TPC-H tables | **9/9 exact match** |
-| Hero demo: 3 persona phrasings vs governed reference | **IDENTICAL**, row for row |
-| Persona views: governed KPI fingerprint | **Same** (`ec8773a9f799`) for Planning, Procurement and Logistics |
-| Streamlit app headless test (Streamlit `AppTest`, 9 scenarios) | **9/9 pass** |
-| Secrets / credentials in repository | **None** |
+| Cortex Analyst NL questions | **22/22** (15 original + 7 new: plant, DOI, landed cost ×2, IoT, definitions, cross-domain) |
+| Metrics vs independent SQL on raw sources | **18/18 exact** (9 original + 9 new) |
+| Verified queries executable | **18/18** |
+| Hero demo: 3 persona phrasings | **IDENTICAL** |
+| Persona views: governed KPI fingerprint | **Same** (`fcb10b862e85`) for all three personas |
+| Streamlit app headless test | **13/13** scenarios |
+| Repository SQL compiles | **30/30** statements |
+| Secrets in repository | **None** |
 
 ---
 
-## 9. Run / deploy
+## 10. Run / deploy
 
-**Prerequisites:** a role that can create databases and Streamlit apps (built with `ACCOUNTADMIN`), a
-warehouse named `COMPUTE_WH`, access to `SNOWFLAKE_SAMPLE_DATA`, and Cortex Analyst enabled in the
-region (app users need the `SNOWFLAKE.CORTEX_USER` database role).
+**Prerequisites:** a role that can create databases, tables and Streamlit apps (built with
+`ACCOUNTADMIN`), warehouse `COMPUTE_WH`, access to `SNOWFLAKE_SAMPLE_DATA`, Cortex Analyst
+available in the region (app users need `SNOWFLAKE.CORTEX_USER`).
 
-Run the scripts in order, pasting each into a Snowsight worksheet or using the Snowflake CLI:
+Run in order, from Snowsight worksheets or the Snowflake CLI:
 
 ```bash
 snow sql -f sql/01_database_schema.sql
-snow sql -f sql/02_curated_views.sql
-snow sql -f sql/03_semantic_view.sql
+snow sql -f sql/02_synthetic_reference_data.sql   # SYNTHETIC plants, tariffs, definitions
+snow sql -f sql/03_curated_views.sql
+snow sql -f sql/04_synthetic_iot_events.sql       # SYNTHETIC IoT telemetry (6M rows, ~1 min on XS)
+snow sql -f sql/05_semantic_view.sql
 ```
 
-Deploy the app:
+Deploy the app (`PUT` must run from a client, not a Snowsight worksheet):
 
 ```sql
-CREATE STAGE IF NOT EXISTS SUPPLYGRAPH_AI.SUPPLY_CHAIN.STREAMLIT_STAGE DIRECTORY = (ENABLE = TRUE);
 PUT 'file:///<repo>/streamlit_app.py' @SUPPLYGRAPH_AI.SUPPLY_CHAIN.STREAMLIT_STAGE AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
 PUT 'file:///<repo>/environment.yml'  @SUPPLYGRAPH_AI.SUPPLY_CHAIN.STREAMLIT_STAGE AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
--- then run sql/04_deploy_streamlit.sql
+-- then: sql/06_deploy_streamlit.sql
 ```
 
 Validate:
 
 ```bash
-snow sql -f sql/05_validation.sql   # every metric row must say PASS
+snow sql -f sql/07_validation.sql   # every metric row must say PASS
 ```
 
-Open the app in Snowsight: **Projects → Streamlit → SupplyGraph AI**.
+Open in Snowsight: **Projects → Streamlit → SupplyGraph AI**.
 
 ---
 
-## 10. Repository
+## 11. Repository
 
 ```
 supplygraph-ai/
-├── README.md               Project overview (this file)
-├── ARCHITECTURE.md         Layers, design decisions, data flow, governance model
-├── VALIDATION.md           Final validation report
-├── SUBMISSION.md           Hackathon submission package and demo script
-├── LICENSE                 MIT
-├── streamlit_app.py        Streamlit in Snowflake application
-├── environment.yml         SiS package pin (streamlit 1.52.0)
+├── README.md · ARCHITECTURE.md · VALIDATION.md · SUBMISSION.md · LICENSE
+├── streamlit_app.py            Streamlit in Snowflake app (9 tabs)
+├── environment.yml             streamlit 1.52.0 pin
 └── sql/
     ├── 01_database_schema.sql
-    ├── 02_curated_views.sql
-    ├── 03_semantic_view.sql    Ontology / semantic view (final, 15/15 version)
-    ├── 04_deploy_streamlit.sql
-    └── 05_validation.sql       Metric vs raw-TPC-H validation
+    ├── 02_synthetic_reference_data.sql   SYNTHETIC plants, freight, duty, source definitions
+    ├── 03_curated_views.sql              TPC-H views + inventory, landed cost, definition comparison
+    ├── 04_synthetic_iot_events.sql       SYNTHETIC IoT telemetry
+    ├── 05_semantic_view.sql              The ontology (semantic view)
+    ├── 06_deploy_streamlit.sql
+    └── 07_validation.sql                 18-metric validation vs raw sources
 ```
 
 ---
 
-## 11. Known limitations
+## 12. Known limitations
 
-1. **Synthetic, uniform data.** TPC-H spreads volume evenly, so regional and supplier differences
-   are small (for example, OTD ranges only from 36.77% to 36.81% by region). The demo shows
-   consistency and traceability, not dramatic business findings.
-2. **Fill Rate is a proxy:** it counts lines not returned, because TPC-H has no backorder or
-   short-shipment data.
-3. **Supplier Performance Score double-counts returns.** Since fill rate = 100 − return rate, the
-   score is effectively `0.40·OTD + 0.60·Fill`. The formula is kept stable for metric continuity
-   and documented here.
-4. **No plant / fulfilment-centre entity**, because the source has no facility data.
-5. **Governance is semantic, not access control.** Metric definitions are governed centrally;
-   row-access policies, masking policies and custom RBAC roles were not implemented.
-6. **Cortex Agents not used.** Agents are available on the account (`SHOW AGENTS` works), but the
-   solution deliberately uses Semantic View + Cortex Analyst as the conversational layer.
-7. **Cortex Analyst is non-deterministic.** Phrasings outside the tested set may generate different
-   SQL. If the Analyst API is unreachable, the app falls back to a matching verified query and labels
-   it as such; otherwise it shows an explicit error instead of an unverified answer.
-8. **Historical period only** (orders 1992-01-01 to 1998-08-02; 1998 is partial).
+1. **Synthetic enrichment.** Plants, freight and duty tariffs, IoT telemetry and the source-system
+   definition variants are synthetic and clearly labelled. They demonstrate the ontology and
+   governance pattern, not real business facts.
+2. **Days of Inventory is very high (~62,910 days).** It is computed genuinely from TPC-H, but
+   TPC-H's `PS_AVAILQTY` is not calibrated to demand. The formula and its governance are the point
+   here, not the absolute value.
+3. **Uniform synthetic data.** TPC-H and the hash-seeded enrichment are evenly distributed, so
+   differences between regions and plants are small. The demo shows consistency and traceability,
+   not dramatic findings.
+4. **Fill Rate is a proxy** (lines not returned); there is no backorder data.
+5. **Supplier Performance Score double-counts returns** (fill = 100 − return). The formula is
+   kept stable and documented.
+6. **Multi-source is simulated within one account.** There are no live ERP/TMS/IoT connectors;
+   the source systems are represented by labelled tables.
+7. **Governance is semantic, not access control.** Row-access policies, masking and custom RBAC
+   are not implemented.
+8. **Cortex Agents not used.** They are available on the account; the solution uses Semantic View
+   + Cortex Analyst by design.
+9. **Cortex Analyst is probabilistic.** Untested phrasings may produce different SQL. If the API is
+   unreachable, the app falls back to a labelled verified query or an explicit error.
+10. Historical period only (orders 1992-01-01 to 1998-08-02).
 
 ---
 
