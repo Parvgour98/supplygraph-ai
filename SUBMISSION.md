@@ -105,17 +105,6 @@ No external services, credentials or data copies of TPC-H.
 6. **Metrics & Evidence tab:** metric catalogue, data provenance (TPC-H vs synthetic vs governed),
    live MATCH checks, ontology table.
 
-### Known limitations
-- Plants, freight/duty tariffs, IoT telemetry and the per-system definition variants are
-  synthetic, and labelled as such everywhere; source systems are simulated, with no live connectors.
-- Days of Inventory (~62,910 days) is computed genuinely, but TPC-H availability isn't calibrated to
-  demand, so the absolute value has no business meaning; the formula and governance do.
-- Synthetic and TPC-H data are uniform, so plant and region differences are small.
-- Fill rate is a proxy (lines not returned). The Supplier Performance Score double-counts returns
-  (documented).
-- Governance covers metric semantics; row-access policies, masking and RBAC are not implemented.
-- Cortex Agents not used by design; Cortex Analyst is probabilistic for untested phrasings.
-
 ### GitHub URL
 https://github.com/Parvgour98/supplygraph-ai
 

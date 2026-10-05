@@ -259,30 +259,4 @@ supplygraph-ai/
 
 ---
 
-## 12. Known limitations
-
-1. **Synthetic enrichment.** Plants, freight and duty tariffs, IoT telemetry and the source-system
-   definition variants are synthetic and clearly labelled. They demonstrate the ontology and
-   governance pattern, not real business facts.
-2. **Days of Inventory is very high (~62,910 days).** It is computed genuinely from TPC-H, but
-   TPC-H's `PS_AVAILQTY` is not calibrated to demand. The formula and its governance are the point
-   here, not the absolute value.
-3. **Uniform synthetic data.** TPC-H and the hash-seeded enrichment are evenly distributed, so
-   differences between regions and plants are small. The demo shows consistency and traceability,
-   not dramatic findings.
-4. **Fill Rate is a proxy** (lines not returned); there is no backorder data.
-5. **Supplier Performance Score double-counts returns** (fill = 100 − return). The formula is
-   kept stable and documented.
-6. **Multi-source is simulated within one account.** There are no live ERP/TMS/IoT connectors;
-   the source systems are represented by labelled tables.
-7. **Governance is semantic, not access control.** Row-access policies, masking and custom RBAC
-   are not implemented.
-8. **Cortex Agents not used.** They are available on the account; the solution uses Semantic View
-   + Cortex Analyst by design.
-9. **Cortex Analyst is probabilistic.** Governed terms, verified queries and a deterministic-ordering rule make answers stable for tested phrasings (12/12 identical); very different wording can still be interpreted differently. If the API is
-   unreachable, the app falls back to a labelled verified query or an explicit error.
-10. Historical period only (orders 1992-01-01 to 1998-08-02).
-
----
-
 *Built with the Snowflake Cortex Code (CoCo) CLI.*

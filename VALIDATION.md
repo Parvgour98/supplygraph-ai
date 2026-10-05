@@ -154,7 +154,3 @@ term meaning `condition_risk_flag = 1` (temperature excursion OR shock). The any
 
 All 12 calls returned one identical row set. The deployed app (headless test) showed identical rows, every one
 with `CONDITION_RISK_FLAG = 1`. After the change: 22/22 questions, 18/18 metrics, hero IDENTICAL, 21/21 verified queries.
-
-## 7. Remaining limitations
-
-See README §12. None are blocking.
